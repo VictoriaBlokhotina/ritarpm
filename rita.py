@@ -32,15 +32,7 @@ class MusicStore:
         demo_products = [
             (1, "Thriller", "Michael Jackson", "Pop", "CD", 15.99, 10),
             (2, "Back in Black", "AC/DC", "Rock", "Vinyl", 22.50, 5),
-            (
-                3,
-                "Dark Side of the Moon",
-                "Pink Floyd",
-                "Rock",
-                "DVD",
-                18.75,
-                0,
-            ),
+            (3, "Dark Side of the Moon", "Pink Floyd", "Rock", "DVD", 18.75, 0),
             (4, "Lemonade", "Beyoncé", "R&B", "CD", 14.99, 7),
             (5, "Abbey Road", "The Beatles", "Rock", "Vinyl", 25.00, 3),
             (6, "Nevermind", "Nirvana", "Grunge", "CD", 16.50, 8),
@@ -147,7 +139,6 @@ class MusicStore:
                 "Остаток (шт)": p.stock,
                 "Статус": "В наличии" if p.stock > 0 else "Нет в наличии",
             }
-            # Сортировка по ID для наглядности
             for p in sorted(self.products, key=lambda x: x.id)
         ]
         return pd.DataFrame(data)
@@ -184,7 +175,7 @@ def export_to_excel(store):
                 writer, sheet_name="Заказы", index=False
             )
 
-        # Лист 3: Отчёт о продажах (Красивое форматирование через pandas)
+        # Лист 3: Отчёт о продажах
         sales_df = store.get_sales_dataframe()
         workbook = writer.book
         sheet = workbook.create_sheet("Отчёт о продажах", 0)
@@ -200,9 +191,8 @@ def export_to_excel(store):
             bold=True, size=12, color="27ae60"
         )
 
-        # Выгрузка самих продаж ниже шапки
+        # Исправлено: Заполнение блока else для корректного экспорта
         if not sales_df.empty:
-            # Переименовываем для красивого отображения в Excel
             sales_export = sales_df[
                 [
                     "date",
@@ -225,3 +215,120 @@ def export_to_excel(store):
                 writer, sheet_name="Отчёт о продажах", startrow=4, index=False
             )
         else:
+            # Если продаж нет, пишем информационное сообщение на листе
+            sheet["A5"] = "Нет совершенных продаж за текущий период"
+
+    processed_data = output.getvalue()
+    return processed_data
+
+
+# ==================== ИНТЕРФЕЙС STREAMLIT ====================
+
+st.set_page_config(page_title="Музыкальный Магазин", layout="wide")
+st.title("🎵 Управление Музыкальным Магазином")
+
+# Инициализация состояния сессии, чтобы данные не сбрасывались при обновлении
+if "store" not in st.session_state:
+    st.session_state.store = MusicStore()
+
+store = st.session_state.store
+
+# Разделение интерфейса на вкладки
+tab_stock, tab_sales, tab_orders = st.tabs(
+    ["📦 Склад / Наличие", "💰 Оформить Продажу", "⏳ Заказы поставщикам"]
+)
+
+# --- ВКЛАДКА 1: СКЛАД ---
+with tab_stock:
+    st.header("Состояние склада")
+    stock_df = store.get_stock_dataframe()
+    st.dataframe(stock_df, use_container_width=True)
+
+    # Кнопка выгрузки в Excel
+    excel_data = export_to_excel(store)
+    st.download_button(
+        label="📥 Скачать полный отчет в Excel",
+        data=excel_data,
+        file_name=f"music_store_report_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+# --- ВКЛАДКА 2: ПРОДАЖИ ---
+with tab_sales:
+    st.header("Регистрация продажи")
+
+    # Формируем список для выбора: "ID: Название - Исполнитель"
+    available_products = [
+        f"{p.id}: {p.name} ({p.artist}) — Остаток: {p.stock} шт."
+        for p in store.products
+    ]
+    selected_prod_str = st.selectbox("Выберите товар", available_products)
+    selected_id = int(selected_prod_str.split(":")[0])
+
+    col1, col2 = st.columns(2)
+    with col1:
+        quantity = st.number_input(
+            "Количество", min_value=1, value=1, step=1, key="sales_qty"
+        )
+    with col2:
+        customer = st.text_input("Имя клиента", placeholder="Иван Иванов")
+
+    if st.button("Продать", type="primary"):
+        res = store.sell_product(selected_id, quantity, customer)
+        if res["success"]:
+            st.success(f"{res['message']} Сумма: {res['total']:.2f} руб.")
+            st.rerun()
+        else:
+            st.error(res["message"])
+
+    st.subheader("История продаж")
+    sales_df = store.get_sales_dataframe()
+    if not sales_df.empty:
+        st.dataframe(sales_df, use_container_width=True)
+    else:
+        st.info("Продаж пока не было.")
+
+# --- ВКЛАДКА 3: ЗАКАЗЫ ПОСТАВЩИКАМ ---
+with tab_orders:
+    st.header("Ожидаемые поставки (Заказы отсутствующих товаров)")
+
+    col3, col4 = st.columns(2)
+    with col3:
+        order_products = [
+            f"{p.id}: {p.name} ({p.artist})" for p in store.products
+        ]
+        selected_order_prod_str = st.selectbox(
+            "Товар для заказа", order_products
+        )
+        order_id = int(selected_order_prod_str.split(":")[0])
+    with col4:
+        order_qty = st.number_input(
+            "Количество для заказа", min_value=1, value=5, step=1
+        )
+
+    order_customer = st.text_input("Поставщик / Ответственный лица", value="Основной поставщик")
+
+    if st.button("Оформить заказ"):
+        res = store.create_order(order_id, order_qty, order_customer)
+        if res["success"]:
+            st.success(res["message"])
+            st.rerun()
+
+    st.subheader("Текущие активные заказы")
+    orders_df = store.get_orders_dataframe()
+
+    if not orders_df.empty:
+        for index, row in orders_df.iterrows():
+            c1, c2 = st.columns([4, 1])
+            with c1:
+                st.write(
+                    f"**{row['product_name']}** — {row['quantity']} шт. (Ожидает от: {row['customer']})"
+                )
+            with c2:
+                if st.button("Принять поставку", key=f"comp_{index}"):
+                    res = store.complete_order(index)
+                    if res["success"]:
+                        st.success(res["message"])
+                        st.rerun()
+    else:
+        st.info("Нет активных заказов на поставку.")
